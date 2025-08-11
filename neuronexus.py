@@ -14,6 +14,7 @@ from reportlab.pdfgen import canvas
 from transformers import pipeline
 from PIL import Image
 import base64
+import torch
 
 # -----------------------
 # PAGE CONFIG
@@ -31,9 +32,9 @@ def load_sentiment_model():
     return pipeline("sentiment-analysis", model="distilbert/distilbert-base-uncased-finetuned-sst-2-english")
 
 @st.cache_resource
-def load_chatbot():
+def load_chatbot_safe():
     from transformers import AutoModelForCausalLM, AutoTokenizer
-    model_name = "microsoft/DialoGPT-medium"
+    model_name = "microsoft/DialoGPT-small"  # smaller model for Streamlit Cloud
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForCausalLM.from_pretrained(model_name)
     return tokenizer, model
@@ -47,7 +48,6 @@ def analyze_mood(user_input):
     return result['label'], result['score']
 
 def chatbot_reply(user_input, chat_history_ids, tokenizer, model):
-    from transformers import AutoModelForCausalLM
     new_input_ids = tokenizer.encode(user_input + tokenizer.eos_token, return_tensors='pt')
     bot_input_ids = torch.cat([chat_history_ids, new_input_ids], dim=-1) if chat_history_ids is not None else new_input_ids
     chat_history_ids = model.generate(bot_input_ids, max_length=1000, pad_token_id=tokenizer.eos_token_id)
@@ -78,7 +78,15 @@ def generate_pdf(content, filename="report.pdf"):
 # -----------------------
 # TABS
 # -----------------------
-tabs = st.tabs(["💬 Mood Check-in", "🤖 AI Chat", "📅 Goal Planner", "💪 Wellness & Fitness", "📈 Tracker", "🎨 Creativity Corner", "🎯 Add-ons"])
+tabs = st.tabs([
+    "💬 Mood Check-in",
+    "🤖 AI Chat",
+    "📅 Goal Planner",
+    "💪 Wellness & Fitness",
+    "📈 Tracker",
+    "🎨 Creativity Corner",
+    "🎯 Add-ons"
+])
 
 # -----------------------
 # TAB 1: Mood Check-in
@@ -101,18 +109,26 @@ with tabs[0]:
 # -----------------------
 with tabs[1]:
     st.header("🤖 AI Chat Companion")
+
     if st.button("Load Chatbot"):
-        tokenizer, model = load_chatbot()
-        st.session_state['chatbot'] = (tokenizer, model, None)
-        st.success("Chatbot loaded!")
+        with st.spinner("Loading AI Chatbot... Please wait ~10-15 seconds"):
+            try:
+                tokenizer, model = load_chatbot_safe()
+                st.session_state['chatbot'] = (tokenizer, model, None)
+                st.success("✅ Chatbot loaded! Start chatting below.")
+            except Exception as e:
+                st.error(f"⚠️ Failed to load chatbot: {e}")
 
     if 'chatbot' in st.session_state:
         user_msg = st.text_input("You:")
         if user_msg:
             tokenizer, model, chat_history = st.session_state['chatbot']
-            reply, chat_history = chatbot_reply(user_msg, chat_history, tokenizer, model)
-            st.session_state['chatbot'] = (tokenizer, model, chat_history)
-            st.text_area("Bot:", value=reply, height=100)
+            try:
+                reply, chat_history = chatbot_reply(user_msg, chat_history, tokenizer, model)
+                st.session_state['chatbot'] = (tokenizer, model, chat_history)
+                st.text_area("Bot:", value=reply, height=100)
+            except Exception as e:
+                st.error(f"⚠️ Chatbot error: {e}")
 
 # -----------------------
 # TAB 3: Goal Planner
