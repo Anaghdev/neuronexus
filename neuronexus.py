@@ -47,6 +47,16 @@ def load_sentiment_model():
     )
 
 @st.cache_resource(show_spinner=True)
+
+@st.cache_resource(show_spinner=False)
+def get_cached_chatbot():
+    """Return (tokenizer, model) cached across reruns to prevent reloads."""
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    model_name = "microsoft/DialoGPT-small"
+    tok = AutoTokenizer.from_pretrained(model_name)
+    mdl = AutoModelForCausalLM.from_pretrained(model_name)
+    return tok, mdl
+
 def load_chatbot_safe():
     # Small + widely available model for Streamlit deployments
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -198,22 +208,24 @@ with tabs[1]:
     c1, c2, c3 = st.columns([1,1,1])
     with c1:
         if st.button("Load Chatbot"):
-            with st.spinner("Loading AI Chatbot…"):
-                try:
-                    tok, mdl = load_chatbot_safe()
-                    st.session_state["chat_tokens"] = (tok, mdl)
-                    st.success("✅ Chatbot loaded! Start chatting below.")
-                except Exception as e:
-                    st.error(f"⚠️ Failed to load chatbot: {e}")
-    with c2:
-        if st.button("Reset Conversation"):
-            st.session_state.chat_history = []
-            st.rerun()
-    with c3:
-        st.caption("DialoGPT-small • local inference")
+    with st.spinner("Loading AI Chatbot…"):
+        try:
+            tok, mdl = get_cached_chatbot()
+            st.session_state["chat_tokens"] = (tok, mdl)
+            st.session_state["chat_ready"] = True
+            st.success("✅ Chatbot loaded! Start chatting below.")
+        except Exception as e:
+            st.error(f"⚠️ Failed to load chatbot: {e}")
+with c2:
+    if st.button("Reset Conversation"):
+        st.session_state.chat_history = []
+        st.rerun()
+with c3:
+    st.caption("DialoGPT-small • local inference")
+
 
     # Render chat using modern UI
-    if st.session_state.get("chat_tokens"):
+    if st.session_state.get("chat_tokens") or st.session_state.get("chat_ready"):
         tok, mdl = st.session_state["chat_tokens"]
 
         # Show history
@@ -251,7 +263,9 @@ with tabs[1]:
                     early_stopping=True,
                 )
                 raw = tok.decode(output_ids[0][input_ids.shape[-1]:], skip_special_tokens=True).strip()
-                raw = _sanitize(raw)
+raw = _sanitize(raw)
+if not raw:
+    raw = "I'm here. Tell me a bit more so I can help."
 
                 # Humanize + sanitize pass
                 def _sanitize(text: str) -> str:
