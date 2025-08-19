@@ -1,21 +1,13 @@
 from __future__ import annotations
-# === GLOBAL SANITIZE HELPER ===
-def _sanitize(text: str) -> str:
-    """Lightly clean model output for UI safety/clarity."""
-    import re
-    text = (text or "").strip()
-    text = re.sub(r"https?://\S+|\S+@\S+", "", text)
-    text = re.sub(r"(.)\1{3,}", r"\1\1", text)
-    sents = re.split(r"(?<=[.!?])\s+", text)
-    text = " ".join(sents[:3]).strip()
-    return text
+# NeuroNexus – AI Life Companion
+# Streamlit single-file app
 
-# neuronexus.py
-# NeuroNexus – AI Life Companion (Human-like Chat + Refactor)
-# Streamlit app
-
-import os, io, base64, datetime as dt, random, time
-from typing import List, Tuple, Optional
+import io
+import os
+import time
+import random
+import datetime as dt
+from typing import Optional, Tuple
 
 import pandas as pd
 import plotly.express as px
@@ -25,28 +17,40 @@ import torch
 
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas as rl_canvas
-from transformers import pipeline
 
 
 # -----------------------
 # PAGE CONFIG
 # -----------------------
-st.set_page_config(page_title="NeuroNexus – AI Life Companion", layout="wide")
-st.title("🧠 NeuroNexus – AI Life Companion")
-st.write("Your all-in-one AI-powered wellness, productivity, and creativity hub.")
+st.set_page_config(
+    page_title="NeuroNexus – AI Life Companion",
+    page_icon="🧠",
+    layout="wide",
+)
 
 
 # -----------------------
-# CACHED MODELS
+# HELPERS
 # -----------------------
+def _sanitize(text: str) -> str:
+    """Lightly clean model output for UI safety/clarity."""
+    import re
+    text = (text or "").strip()
+    # strip links/emails
+    text = re.sub(r"https?://\S+|\S+@\S+", "", text)
+    # compress excessive character repeats
+    text = re.sub(r"(.)\1{3,}", r"\1\1", text)
+    # keep first ~3 sentences for concision
+    sents = re.split(r"(?<=[.!?])\s+", text)
+    return " ".join(sents[:3]).strip()
+
+
 @st.cache_resource(show_spinner=False)
 def load_sentiment_model():
-    return pipeline(
-        "sentiment-analysis",
-        model="distilbert/distilbert-base-uncased-finetuned-sst-2-english",
-    )
+    from transformers import pipeline
+    # small, fast model
+    return pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
 
-@st.cache_resource(show_spinner=True)
 
 @st.cache_resource(show_spinner=False)
 def get_cached_chatbot():
@@ -57,18 +61,7 @@ def get_cached_chatbot():
     mdl = AutoModelForCausalLM.from_pretrained(model_name)
     return tok, mdl
 
-def load_chatbot_safe():
-    # Small + widely available model for Streamlit deployments
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-    model_name = "microsoft/DialoGPT-small"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForCausalLM.from_pretrained(model_name)
-    return tokenizer, model
 
-
-# -----------------------
-# HELPERS
-# -----------------------
 def analyze_mood(user_input: str) -> Tuple[Optional[str], Optional[float]]:
     try:
         sentiment = load_sentiment_model()
@@ -77,43 +70,51 @@ def analyze_mood(user_input: str) -> Tuple[Optional[str], Optional[float]]:
     except Exception:
         return None, None
 
-def generate_pdf(content: str, filename: str = "report.pdf") -> str:
+
+def generate_pdf_bytes(content: str) -> bytes:
+    """Create a simple single-page PDF and return bytes."""
     buffer = io.BytesIO()
     c = rl_canvas.Canvas(buffer, pagesize=letter)
     text_object = c.beginText(50, 750)
     for line in content.split("\n"):
         text_object.textLine(line)
     c.drawText(text_object)
+    c.showPage()
     c.save()
     buffer.seek(0)
-    b64 = base64.b64encode(buffer.read()).decode()
-    return f'<a href="data:application/pdf;base64,{b64}" download="{filename}">📄 Download PDF</a>'
+    return buffer.read()
+
 
 def get_weather(city: str) -> Tuple[Optional[float], Optional[str]]:
-    api_key = st.secrets.get("OPENWEATHER_API_KEY")
-    if not api_key:
-        return None, None
+    """Return (temp_c, description) from OpenWeather; requires OPENWEATHER_API_KEY in secrets."""
     try:
-        url = f"https://api.openweathermap.org/data/2.5/weather"
-        r = requests.get(url, params={"q": city, "appid": api_key, "units": "metric"}, timeout=10)
+        api_key = st.secrets.get("OPENWEATHER_API_KEY")
+        if not api_key:
+            return None, None
+        url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
+        r = requests.get(url, timeout=10)
+        if r.status_code != 200:
+            return None, None
         data = r.json()
-        if "main" in data:
-            return float(data["main"]["temp"]), data["weather"][0]["description"]
+        temp_c = float(data["main"]["temp"])
+        desc = str(data["weather"][0]["description"]).title()
+        return temp_c, desc
     except Exception:
-        pass
-    return None, None
+        return None, None
+
 
 def init_state():
-    st.session_state.setdefault("chat_tokens", None)  # (tokenizer, model)
-    st.session_state.setdefault("chat_history", [])   # [{"role":"user|assistant","text": str}]
+    st.session_state.setdefault("chat_history", [])  # list[{"role": "user|assistant", "text": str}]
     st.session_state.setdefault("tracker_df", pd.DataFrame(columns=["Date", "Mood"]))
     st.session_state.setdefault("typing_speed", 0.02)
+    st.session_state.setdefault("chat_ready", False)
+
 
 init_state()
 
 
 # -----------------------
-# SIDEBAR SETTINGS
+# SIDEBAR: Settings + Profile + Data
 # -----------------------
 with st.sidebar:
     st.subheader("Chat Settings")
@@ -121,26 +122,35 @@ with st.sidebar:
     temp = st.slider("Temperature", 0.0, 1.5, 0.9, 0.05)
     top_p = st.slider("Top‑p", 0.1, 1.0, 0.9, 0.05)
     rep_pen = st.slider("Repetition penalty", 1.0, 2.0, 1.1, 0.05)
-    human_mode = st.toggle("Human-like responses", value=True,
-                           help="Adds empathy, concise phrasing, and a follow‑up question.")
-    typing_speed = st.slider("Typing speed (seconds per word)", 0.0, 0.08, st.session_state.typing_speed, 0.005)
+    human_mode = st.toggle(
+        "Human-like responses",
+        value=True,
+        help="Adds empathy, concise phrasing, and a follow‑up question.",
+    )
+    typing_speed = st.slider(
+        "Typing speed (seconds per word)",
+        0.0, 0.08,
+        st.session_state.typing_speed,
+        0.005,
+    )
     st.session_state.typing_speed = typing_speed
 
     st.divider()
-    # New: Profile & Data
+
+    # Profile
     st.subheader("Profile")
     st.session_state.setdefault("profile_name", "")
     st.session_state.profile_name = st.text_input("Your name (optional)", value=st.session_state.profile_name)
 
+    # Data Export / Reset
     st.subheader("Data Export / Reset")
-    # Prepare downloads
-    chat_json = io.StringIO()
+
+    # Chat JSON
     try:
         import json as _json
-        _json.dump(st.session_state.get("chat_history", []), chat_json, ensure_ascii=False, indent=2)
+        chat_bytes = _json.dumps(st.session_state.get("chat_history", []), ensure_ascii=False, indent=2).encode("utf-8")
     except Exception:
-        chat_json = io.StringIO("[]")
-    chat_bytes = chat_json.getvalue().encode("utf-8")
+        chat_bytes = b"[]"
 
     if st.download_button("⬇️ Download chat history (JSON)", data=chat_bytes, file_name="neuronexus_chat.json", mime="application/json"):
         st.toast("Chat history downloaded")
@@ -157,19 +167,22 @@ with st.sidebar:
         pass
 
     if st.button("🗑️ Reset app state"):
-        for k in list(st.session_state.keys()):
-            if k not in ("typing_speed",):
-                del st.session_state[k]
-        st.session_state.typing_speed = 0.02
+        preserve = st.session_state.typing_speed
+        st.session_state.clear()
+        init_state()
+        st.session_state.typing_speed = preserve
         st.rerun()
 
-    st.caption("Tip: set an OpenWeather key in `.streamlit/secrets.toml`:\n\n"
-               "[OPENWEATHER_API_KEY]\nOPENWEATHER_API_KEY=\"your_key_here\"")
+    st.divider()
+    st.caption("Tip: add OPENWEATHER_API_KEY to `.streamlit/secrets.toml` to enable Weather.")
 
 
 # -----------------------
-# TABS
+# LAYOUT: Title & Tabs
 # -----------------------
+st.title("🧠 NeuroNexus – AI Life Companion")
+st.caption("Your all-in-one AI-powered wellness, productivity, and creativity hub.")
+
 tabs = st.tabs([
     "💬 Mood Check-in",
     "🤖 AI Chat",
@@ -177,7 +190,7 @@ tabs = st.tabs([
     "💪 Wellness & Fitness",
     "📈 Tracker",
     "🎨 Creativity Corner",
-    "🎯 Add-ons"
+    "🎯 Add-ons",
 ])
 
 
@@ -186,48 +199,47 @@ tabs = st.tabs([
 # -----------------------
 with tabs[0]:
     st.header("💬 Mood Check-in")
-    mood_input = st.text_input("How are you feeling today?")
-    if mood_input:
-        label, score = analyze_mood(mood_input)
+    user_input = st.text_input("How are you feeling today?")
+    if user_input:
+        label, score = analyze_mood(user_input)
         if label:
             st.write(f"**Sentiment:** {label.title()} ({score:.2f})")
-        if label == "POSITIVE":
-            st.success("Love the energy! Here’s some upbeat music:")
-            st.components.v1.iframe("https://open.spotify.com/embed/playlist/37i9dQZF1DXdPec7aLTmlC", height=200)
-        elif label == "NEGATIVE":
-            st.warning("It’s okay to have down days. Try this calming playlist:")
-            st.components.v1.iframe("https://open.spotify.com/embed/playlist/37i9dQZF1DWZeKCadgRdKQ", height=200)
+            if label.upper() == "POSITIVE":
+                st.success("Love the energy! Here’s some upbeat music:")
+                st.components.v1.iframe("https://open.spotify.com/embed/playlist/37i9dQZF1DXdPec7aLTmlC", height=200)
+            elif label.upper() == "NEGATIVE":
+                st.warning("It’s okay to have down days. Try this calming playlist:")
+                st.components.v1.iframe("https://open.spotify.com/embed/playlist/37i9dQZF1DWZeKCadgRdKQ", height=200)
 
 
 # -----------------------
-# TAB 2: AI Chat (Human-like)
+# TAB 2: AI Chat
 # -----------------------
 with tabs[1]:
     st.header("🤖 AI Chat Companion")
 
-    c1, c2, c3 = st.columns([1,1,1])
+    c1, c2, c3 = st.columns([1, 1, 1])
     with c1:
         if st.button("Load Chatbot"):
-    with st.spinner("Loading AI Chatbot…"):
-        try:
-            tok, mdl = get_cached_chatbot()
-            st.session_state["chat_tokens"] = (tok, mdl)
-            st.session_state["chat_ready"] = True
-            st.success("✅ Chatbot loaded! Start chatting below.")
-        except Exception as e:
-            st.error(f"⚠️ Failed to load chatbot: {e}")
-with c2:
-    if st.button("Reset Conversation"):
-        st.session_state.chat_history = []
-        st.rerun()
-with c3:
-    st.caption("DialoGPT-small • local inference")
+            with st.spinner("Loading AI Chatbot…"):
+                try:
+                    tok, mdl = get_cached_chatbot()
+                    st.session_state["chat_tokens"] = (tok, mdl)
+                    st.session_state["chat_ready"] = True
+                    st.success("✅ Chatbot loaded! Start chatting below.")
+                except Exception as e:
+                    st.error(f"⚠️ Failed to load chatbot: {e}")
+    with c2:
+        if st.button("Reset Conversation"):
+            st.session_state.chat_history = []
+            st.rerun()
+    with c3:
+        st.caption("DialoGPT-small • local inference")
 
+    st.markdown("---")
 
-    # Render chat using modern UI
     if st.session_state.get("chat_tokens") or st.session_state.get("chat_ready"):
-        tok, mdl = st.session_state["chat_tokens"]
-
+        tok, mdl = st.session_state.get("chat_tokens", (None, None))
         # Show history
         for m in st.session_state.chat_history:
             with st.chat_message(m["role"], avatar=("👤" if m["role"] == "user" else "🤖")):
@@ -241,13 +253,16 @@ with c3:
                 st.markdown(user_msg)
 
             try:
-                # Build dialogue: keep last few user turns (DialoGPT is single-turn leaning)
+                if tok is None or mdl is None:
+                    tok, mdl = get_cached_chatbot()
+                    st.session_state["chat_tokens"] = (tok, mdl)
+
+                # Build dialogue: use last 6 user turns (DialoGPT works mostly single-turn)
                 eos = tok.eos_token or ""
                 user_turns = [m["text"] for m in st.session_state.chat_history if m["role"] == "user"]
                 primer = (
                     "You are Neuro, a warm, concise chat companion.\n"
-                    "Guidelines: be empathetic, natural, short sentences, avoid overpromising. "
-                    "Ask one relevant follow-up. Avoid medical/legal claims.\n"
+                    "Guidelines: be empathetic, natural, short sentences. Ask one helpful follow-up.\n"
                 ) if human_mode else ""
                 dialogue = primer + eos.join(user_turns[-6:]) + eos
                 input_ids = tok.encode(dialogue, return_tensors="pt")
@@ -263,35 +278,19 @@ with c3:
                     early_stopping=True,
                 )
                 raw = tok.decode(output_ids[0][input_ids.shape[-1]:], skip_special_tokens=True).strip()
-raw = _sanitize(raw)
-if not raw:
-    raw = "I'm here. Tell me a bit more so I can help."
+                raw = _sanitize(raw)
+                if not raw:
+                    raw = "I'm here. Tell me a bit more so I can help."
 
-                # Humanize + sanitize pass
-                def _sanitize(text: str) -> str:
-                    import re
-                    text = (text or "").strip()
-                    text = re.sub(r"https?://\S+|\S+@\S+", "", text)
-                    text = re.sub(r"(.)\1{3,}", r"\1\1", text)
-                    sents = re.split(r"(?<=[.!?])\s+", text)
-                    text = " ".join(sents[:3]).strip()
-                    return text
-
-                # Humanize pass
                 def humanize(text: str, context: str) -> str:
-                    # Trim & tidy
                     text = (text or "").replace("\n\n", "\n").strip()
                     if len(text) > 700:
                         text = text[:700].rsplit(". ", 1)[0] + "."
-                    # Mood-aware opener
                     label, _ = analyze_mood(context)
                     opener = "I hear you. " if (label and label.upper() == "NEGATIVE") else ""
-                    # One follow-up
                     follow = "\n\nWhat would be a good next step for you?" if human_mode else ""
-                    # Keep it conversational
                     parts = [p.strip() for p in text.split("\n") if p.strip()]
                     concise = " ".join(parts)
-                    # Light variety
                     prefix = random.choice(["", "", "Hmm, ", "Okay, "])
                     return (opener + prefix + concise).strip() + follow
 
@@ -309,12 +308,10 @@ if not raw:
 
                 st.session_state.chat_history.append({"role": "assistant", "text": reply})
                 st.rerun()
-
             except Exception as e:
                 st.error(f"⚠️ Chatbot error: {e}")
     else:
         st.info("Click **Load Chatbot** to begin.")
-        # Quick starters
         st.caption("Try a starter:")
         cols = st.columns(4)
         starters = [
@@ -336,34 +333,33 @@ with tabs[2]:
     st.header("📅 AI Goal Planner")
     goal = st.text_input("Enter your goal:")
     if goal:
-        # Build a simple SMART-ish plan without external models
-        plan = [
-            f"Goal: {goal}",
-            "",
-            "Timeline:",
-            "- Week 1: Define scope and break goal into tasks",
-            "- Week 2: Gather resources and block sessions",
-            "- Week 3: Execute core tasks and track progress",
-            "- Week 4: Review outcomes, fix gaps, and finalize",
-            "",
-            "Tasks:",
-            f"- Outline what '{goal}' means and success criteria",
-            f"- Prepare materials/tools for '{goal}'",
-            f"- Do 3 focused sessions (45–60 min) for '{goal}'",
-            f"- Summarize learnings and next steps",
-            "",
-            "Resources:",
-            "- Calendar blocks for deep work",
-            "- Notes app or doc for tracking",
-            "",
-            "Risks & Mitigations:",
-            "- Distractions → Use Do Not Disturb",
-            "- Over-scope → Keep tasks small and time-boxed",
-        ]
-        body = "\n".join(plan)
-        st.markdown(body)
-        pdf_link = generate_pdf(body, "goal_plan.pdf")
-        st.markdown(pdf_link, unsafe_allow_html=True)
+        # Simple SMART-style outline
+        plan = f"""Goal: {goal}
+
+Timeline:
+• Week 1: Define scope and break goal into tasks
+• Week 2: Gather resources and block sessions
+• Week 3: Execute core tasks and track progress
+• Week 4: Review outcomes, fix gaps, and finalize
+
+Tasks:
+• Outline what '{goal}' means and success criteria
+• Prepare materials/tools for '{goal}'
+• Do 3 focused sessions (45–60 min) for '{goal}'
+• Summarize learnings and next steps
+
+Resources:
+• Calendar blocks for deep work
+• Notes app or doc for tracking
+
+Risks & Mitigations:
+• Distractions → Use Do Not Disturb
+• Over‑scope → Keep tasks small and time‑boxed
+"""
+        st.text(plan)
+
+        pdf_bytes = generate_pdf_bytes(plan)
+        st.download_button("📄 Download PDF", data=pdf_bytes, file_name="goal_plan.pdf", mime="application/pdf")
 
 
 # -----------------------
@@ -371,23 +367,16 @@ with tabs[2]:
 # -----------------------
 with tabs[3]:
     st.header("💪 Wellness & Fitness Coach")
-
     st.subheader("Breathing Exercise")
     st.write("Inhale 4s • Hold 4s • Exhale 6s — repeat for 1–2 minutes.")
 
     st.subheader("Healthy Meal Suggestion")
-    meals = [
-        "Grilled salmon with veggies",
-        "Quinoa salad with chickpeas",
-        "Oatmeal with berries & nuts",
-        "Avocado toast + egg",
-        "Tofu stir-fry with greens",
-    ]
-    st.info(random.choice(meals))
+    meals = ["Avocado toast + egg", "Greek yogurt + fruit", "Brown rice + beans", "Grilled chicken + salad"]
+    st.success(random.choice(meals))
 
     st.subheader("Exercise Suggestion")
-    exercises = ["Push-ups (2×10)", "Bodyweight squats (2×12)", "Yoga sun salutation (3 rounds)", "Plank (2×30s)"]
-    st.success(random.choice(exercises))
+    workouts = ["Plank (2×30s)", "Walk 10 minutes", "Bodyweight squats (2×10)", "Push-ups (2×8)"]
+    st.success(random.choice(workouts))
 
 
 # -----------------------
@@ -396,50 +385,52 @@ with tabs[3]:
 with tabs[4]:
     st.header("📈 Habit & Mood Tracker")
 
-    date = st.date_input("Date", dt.date.today())
-    mood = st.selectbox("Mood", ["Happy", "Sad", "Neutral", "Stressed", "Calm", "Excited"])
+    date_val = st.text_input("Date", dt.date.today().strftime("%Y/%m/%d"))
+    mood_val = st.text_input("Mood", "Happy")
 
-    c1, c2, c3 = st.columns([1,1,2])
+    c1, c2 = st.columns(2)
     with c1:
         if st.button("Save Entry"):
-            row = pd.DataFrame([[str(date), mood]], columns=["Date", "Mood"])
-            st.session_state.tracker_df = pd.concat([st.session_state.tracker_df, row], ignore_index=True)
+            df = st.session_state.tracker_df.copy()
+            df.loc[len(df)] = [date_val, mood_val]
+            st.session_state.tracker_df = df
             st.success("Saved!")
 
     with c2:
         if st.button("Clear All"):
             st.session_state.tracker_df = pd.DataFrame(columns=["Date", "Mood"])
-            st.warning("Cleared.")
+            st.info("Cleared.")
 
-    with c3:
-        # CSV download
-        if not st.session_state.tracker_df.empty:
-            csv = st.session_state.tracker_df.to_csv(index=False).encode("utf-8")
-            st.download_button("Download CSV", csv, "progress.csv", "text/csv")
-
-    # Upload CSV merge
-    up = st.file_uploader("Upload a CSV to merge (columns: Date,Mood)", type=["csv"])
-    # Template download
-    st.download_button('Download CSV template', data='Date,Mood\n2025-01-01,Happy\n', file_name='tracker_template.csv', mime='text/csv')
+    st.write("Upload a CSV to merge (columns: Date,Mood)")
+    up = st.file_uploader("CSV merge", type=["csv"], label_visibility="collapsed")
     if up is not None:
         try:
-            up_df = pd.read_csv(up)
-            up_df = up_df[["Date", "Mood"]]
-            st.session_state.tracker_df = pd.concat([st.session_state.tracker_df, up_df], ignore_index=True)
-            st.success("Merged uploaded entries.")
+            incoming = pd.read_csv(up)
+            if set(["Date", "Mood"]).issubset(incoming.columns):
+                st.session_state.tracker_df = pd.concat([st.session_state.tracker_df, incoming[["Date", "Mood"]]], ignore_index=True)
+                st.success("Merged CSV entries.")
+            else:
+                st.error("CSV must contain columns: Date,Mood")
         except Exception as e:
-            st.error(f"Upload failed: {e}")
+            st.error(f"Failed to read CSV: {e}")
 
-    # Show & simple viz
-    if st.session_state.tracker_df.empty:
-        st.write("No data yet.")
-    else:
-        st.dataframe(st.session_state.tracker_df, use_container_width=True)
+    # Chart
+    df = st.session_state.tracker_df
+    if not df.empty:
         try:
-            fig = px.histogram(st.session_state.tracker_df, x="Mood", title="Mood Frequency")
+            chart_df = df.copy()
+            chart_df["Date"] = pd.to_datetime(chart_df["Date"], errors="coerce")
+            chart_df = chart_df.dropna()
+            fig = px.scatter(chart_df, x="Date", y="Mood", title="Mood over time")
             st.plotly_chart(fig, use_container_width=True)
         except Exception:
             pass
+    else:
+        st.caption("No data yet.")
+
+    # Template
+    template = "Date,Mood\n2025/01/01,Happy\n"
+    st.download_button("Download CSV template", data=template.encode("utf-8"), file_name="mood_template.csv", mime="text/csv")
 
 
 # -----------------------
@@ -447,12 +438,11 @@ with tabs[4]:
 # -----------------------
 with tabs[5]:
     st.header("🎨 Creativity Corner")
-    st.write("AI-generated Quote:")
     quotes = [
-        "Believe you can and you're halfway there.",
         "Every day is a new beginning.",
         "Small steps become big changes.",
         "Progress, not perfection.",
+        "You’ve got this.",
     ]
     st.success(random.choice(quotes))
 
@@ -476,10 +466,5 @@ with tabs[6]:
                 st.error("City not found or API error.")
 
     st.subheader("Random Fun Fact")
-    facts = [
-        "Honey never spoils.",
-        "Bananas are berries.",
-        "Sharks existed before trees.",
-        "Octopuses have three hearts.",
-    ]
+    facts = ["Honey never spoils.", "Bananas are berries.", "Sharks existed before trees.", "Octopuses have three hearts."]
     st.write(random.choice(facts))
