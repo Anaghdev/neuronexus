@@ -1,3 +1,4 @@
+from __future__ import annotations
 # === GLOBAL SANITIZE HELPER ===
 def _sanitize(text: str) -> str:
     """Lightly clean model output for UI safety/clarity."""
@@ -13,7 +14,6 @@ def _sanitize(text: str) -> str:
 # NeuroNexus – AI Life Companion (Human-like Chat + Refactor)
 # Streamlit app
 
-from __future__ import annotations
 import os, io, base64, datetime as dt, random, time
 from typing import List, Tuple, Optional
 
