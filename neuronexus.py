@@ -133,7 +133,7 @@ with tabs[0]:
     if mood_input:
         label, score = analyze_mood(mood_input)
         if label:
-            st.write(f"**Sentiment:** {label} ({score:.2f})")
+            st.write(f"**Sentiment:** {label.title()} ({score:.2f})")
         if label == "POSITIVE":
             st.success("Love the energy! Here’s some upbeat music:")
             st.components.v1.iframe("https://open.spotify.com/embed/playlist/37i9dQZF1DXdPec7aLTmlC", height=200)
@@ -204,6 +204,17 @@ with tabs[1]:
                     early_stopping=True,
                 )
                 raw = tok.decode(output_ids[0][input_ids.shape[-1]:], skip_special_tokens=True).strip()
+                raw = _sanitize(raw)
+
+                # Humanize + sanitize pass
+                def _sanitize(text: str) -> str:
+                    import re
+                    text = (text or "").strip()
+                    text = re.sub(r"https?://\S+|\S+@\S+", "", text)
+                    text = re.sub(r"(.)\1{3,}", r"\1\1", text)
+                    sents = re.split(r"(?<=[.!?])\s+", text)
+                    text = " ".join(sents[:3]).strip()
+                    return text
 
                 # Humanize pass
                 def humanize(text: str, context: str) -> str:
@@ -264,9 +275,33 @@ with tabs[2]:
     st.header("📅 AI Goal Planner")
     goal = st.text_input("Enter your goal:")
     if goal:
-        steps = [f"Step {i+1}: {goal} — subtask {i+1}" for i in range(5)]
-        st.write("\n".join(steps))
-        pdf_link = generate_pdf("\n".join(steps), "goal_plan.pdf")
+        # Build a simple SMART-ish plan without external models
+        plan = [
+            f"Goal: {goal}",
+            "",
+            "Timeline:",
+            "- Week 1: Define scope and break goal into tasks",
+            "- Week 2: Gather resources and block sessions",
+            "- Week 3: Execute core tasks and track progress",
+            "- Week 4: Review outcomes, fix gaps, and finalize",
+            "",
+            "Tasks:",
+            f"- Outline what '{goal}' means and success criteria",
+            f"- Prepare materials/tools for '{goal}'",
+            f"- Do 3 focused sessions (45–60 min) for '{goal}'",
+            f"- Summarize learnings and next steps",
+            "",
+            "Resources:",
+            "- Calendar blocks for deep work",
+            "- Notes app or doc for tracking",
+            "",
+            "Risks & Mitigations:",
+            "- Distractions → Use Do Not Disturb",
+            "- Over-scope → Keep tasks small and time-boxed",
+        ]
+        body = "\n".join(plan)
+        st.markdown(body)
+        pdf_link = generate_pdf(body, "goal_plan.pdf")
         st.markdown(pdf_link, unsafe_allow_html=True)
 
 
@@ -323,6 +358,8 @@ with tabs[4]:
 
     # Upload CSV merge
     up = st.file_uploader("Upload a CSV to merge (columns: Date,Mood)", type=["csv"])
+    # Template download
+    st.download_button('Download CSV template', data='Date,Mood\n2025-01-01,Happy\n', file_name='tracker_template.csv', mime='text/csv')
     if up is not None:
         try:
             up_df = pd.read_csv(up)
