@@ -58,7 +58,7 @@ def analyze_mood(user_input: str) -> Tuple[Optional[str], Optional[float]]:
 
 def generate_pdf(content: str, filename: str = "report.pdf") -> str:
     buffer = io.BytesIO()
-    c = rl_canvas(buffer, pagesize=letter)
+    c = rl_canvas.Canvas(buffer, pagesize=letter)
     text_object = c.beginText(50, 750)
     for line in content.split("\n"):
         text_object.textLine(line)
