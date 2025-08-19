@@ -1,3 +1,14 @@
+# === GLOBAL SANITIZE HELPER ===
+def _sanitize(text: str) -> str:
+    """Lightly clean model output for UI safety/clarity."""
+    import re
+    text = (text or "").strip()
+    text = re.sub(r"https?://\S+|\S+@\S+", "", text)
+    text = re.sub(r"(.)\1{3,}", r"\1\1", text)
+    sents = re.split(r"(?<=[.!?])\s+", text)
+    text = " ".join(sents[:3]).strip()
+    return text
+
 # neuronexus.py
 # NeuroNexus – AI Life Companion (Human-like Chat + Refactor)
 # Streamlit app
