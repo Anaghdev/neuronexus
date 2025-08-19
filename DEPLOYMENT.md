@@ -1,31 +1,28 @@
-# Deploying NeuroNexus on Streamlit Cloud
+# Deploying NeuroNexus on Streamlit Community Cloud
 
-## 1) Repo contents
-Make sure your repo looks like this at the root:
-- `streamlit_app.py` (entrypoint)
-- `neuronexus.py` (the app logic)
-- `requirements.txt` (or use `requirements_streamlit.txt`)
-- `.streamlit/secrets.toml` (add your keys)
-- `runtime.txt` (Python version)
+1. **Create a GitHub repo** and push the `neuronexus/` folder contents.
+2. Go to **https://share.streamlit.io** → **New app**.
+3. Select your repo and branch. Set:
+   - **Main file path:** `streamlit_app.py`
+   - (Optional) **Python version:** from `runtime.txt` if prompted (3.10)
+4. Click **Advanced settings → Secrets** and add (optional):
+   ```toml
+   OPENWEATHER_API_KEY = "your_openweather_key"
+   ```
+5. Click **Deploy**. Your app will build and go live.
 
-## 2) Requirements
-If your current `requirements.txt` fails to build, rename it and use `requirements_streamlit.txt`.
+### Alternative: Local Docker (optional)
 
-## 3) Secrets
-In Streamlit Cloud → **⚙️ Settings → Secrets**, paste:
+```bash
+# Build
+docker build -t neuronexus .
+
+# Run
+docker run -p 8501:8501 neuronexus
 ```
-OPENWEATHER_API_KEY = "your-openweather-key"
-```
-> A local `.streamlit/secrets.toml` file is provided as a template for local dev only.
 
-## 4) Deploy
-- Push this folder to GitHub.
-- In Streamlit Cloud, create an app → pick the repo and branch.
-- **Main file path:** `streamlit_app.py` (or `app.py`).
-- Click **Deploy**.
+### Troubleshooting
 
-## 5) Local run
-```
-pip install -r requirements.txt   # or requirements_streamlit.txt
-streamlit run streamlit_app.py
-```
+- If build fails on Community Cloud, switch to the looser pins in `requirements_streamlit.txt` (set that as your install file).
+- If you see “No module named ...”, ensure your **Main file path** is `streamlit_app.py` (not `neuronexus.py`).
+- For slow cold starts, use smaller models or pre‑load them inside an action button.

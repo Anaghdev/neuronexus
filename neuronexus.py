@@ -106,6 +106,42 @@ with st.sidebar:
     st.session_state.typing_speed = typing_speed
 
     st.divider()
+    # New: Profile & Data
+    st.subheader("Profile")
+    st.session_state.setdefault("profile_name", "")
+    st.session_state.profile_name = st.text_input("Your name (optional)", value=st.session_state.profile_name)
+
+    st.subheader("Data Export / Reset")
+    # Prepare downloads
+    chat_json = io.StringIO()
+    try:
+        import json as _json
+        _json.dump(st.session_state.get("chat_history", []), chat_json, ensure_ascii=False, indent=2)
+    except Exception:
+        chat_json = io.StringIO("[]")
+    chat_bytes = chat_json.getvalue().encode("utf-8")
+
+    if st.download_button("⬇️ Download chat history (JSON)", data=chat_bytes, file_name="neuronexus_chat.json", mime="application/json"):
+        st.toast("Chat history downloaded")
+
+    # Tracker CSV
+    try:
+        _df = st.session_state.get("tracker_df")
+        if _df is not None and not _df.empty:
+            csv_bytes = _df.to_csv(index=False).encode("utf-8")
+            st.download_button("⬇️ Download mood tracker (CSV)", data=csv_bytes, file_name="mood_tracker.csv", mime="text/csv")
+        else:
+            st.caption("No tracker data yet.")
+    except Exception:
+        pass
+
+    if st.button("🗑️ Reset app state"):
+        for k in list(st.session_state.keys()):
+            if k not in ("typing_speed",):
+                del st.session_state[k]
+        st.session_state.typing_speed = 0.02
+        st.rerun()
+
     st.caption("Tip: set an OpenWeather key in `.streamlit/secrets.toml`:\n\n"
                "[OPENWEATHER_API_KEY]\nOPENWEATHER_API_KEY=\"your_key_here\"")
 
