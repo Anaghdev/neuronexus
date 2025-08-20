@@ -88,7 +88,7 @@ def generate_pdf_bytes(content: str) -> bytes:
 def get_weather(city: str) -> Tuple[Optional[float], Optional[str]]:
     """Return (temp_c, description) from OpenWeather; requires OPENWEATHER_API_KEY in secrets."""
     try:
-        api_key = st.secrets.get("OPENWEATHER_API_KEY")
+        api_key = st.secrets.get("f83116e42fe53acdc66a7e08625ad119")
         if not api_key:
             return None, None
         url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
